@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>YouTube 360 Viewer</title>
+
+<style>
+    body {
+        margin: 0;
+        padding: 30px;
+        background: #111;
+        color: white;
+        font-family: Arial, sans-serif;
+    }
+
+    .container {
+        max-width: 1000px;
+        margin: auto;
+    }
+
+    h1 {
+        margin-top: 0;
+    }
+
+    .url-row {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+
+    #url {
+        flex: 1;
+        padding: 12px;
+        font-size: 16px;
+        background: #222;
+        border: 1px solid #555;
+        color: white;
+        border-radius: 5px;
+    }
+
+    button {
+        padding: 12px 20px;
+        border: none;
+        border-radius: 5px;
+        background: #e62117;
+        color: white;
+        cursor: pointer;
+        font-size: 16px;
+    }
+
+    button:hover {
+        background: #ff3328;
+    }
+
+    #player {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        background: black;
+        margin-bottom: 20px;
+    }
+
+    .controls {
+        background: #222;
+        padding: 20px;
+        border-radius: 8px;
+    }
+
+    .control {
+        margin-bottom: 20px;
+    }
+
+    .label {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+    }
+
+    .value {
+        color: #aaa;
+        font-family: monospace;
+    }
+
+    input[type="range"] {
+        width: 100%;
+    }
+
+    #status {
+        margin-top: 15px;
+        color: #aaa;
+        font-size: 14px;
+    }
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>YouTube 360° Viewer</h1>
+
+    <div class="url-row">
+        <input
+            id="url"
+            type="text"
+            value="https://youtu.be/PscPh8DmN8E"
+            placeholder="Paste YouTube URL..."
+        >
+
+        <button onclick="loadVideo()">
+            Load
+        </button>
+    </div>
+
+    <div id="player"></div>
+
+    <div class="controls">
+
+        <!-- YAW -->
+        <div class="control">
+            <div class="label">
+                <span>Yaw</span>
+                <span id="yawValue" class="value">0°</span>
+            </div>
+
+            <input
+                id="yaw"
+                type="range"
+                min="-180"
+                max="180"
+                value="0"
+                step="1"
+                oninput="updateView()"
+            >
+        </div>
+
+        <!-- PITCH -->
+        <div class="control">
+            <div class="label">
+                <span>Pitch</span>
+                <span id="pitchValue" class="value">0°</span>
+            </div>
+
+            <input
+                id="pitch"
+                type="range"
+                min="-90"
+                max="90"
+                value="0"
+                step="1"
+                oninput="updateView()"
+            >
+        </div>
+
+        <!-- FOV -->
+        <div class="control">
+            <div class="label">
+                <span>FOV</span>
+                <span id="fovValue" class="value">100°</span>
+            </div>
+
+            <input
+                id="fov"
+                type="range"
+                min="30"
+                max="120"
+                value="100"
+                step="1"
+                oninput="updateView()"
+            >
+        </div>
+
+        <button onclick="resetView()">
+            Reset
+        </button>
+
+        <div id="status">
+            Loading YouTube player...
+        </div>
+
+    </div>
+
+</div>
+
+
+<script>
+
+let player = null;
+let playerReady = false;
+let pendingVideoId = null;
+
+
+/*
+ * Load YouTube IFrame API
+ */
+
+const tag = document.createElement("script");
+
+tag.src = "https://www.youtube.com/iframe_api";
+
+document.head.appendChild(tag);
+
+
+/*
+ * YouTube calls this automatically
+ */
+
+function onYouTubeIframeAPIReady() {
+
+    player = new YT.Player("player", {
+
+        width: "100%",
+        height: "100%",
+
+        videoId: "PscPh8DmN8E",
+
+        playerVars: {
+            playsinline: 1,
+            rel: 0
+        },
+
+        events: {
+
+            onReady: function(event) {
+
+                playerReady = true;
+
+                document.getElementById("status").textContent =
+                    "Player ready.";
+
+                // Apply initial view
+                updateView();
+
+                // If user clicked Load before player was ready
+                if (pendingVideoId) {
+
+                    player.loadVideoById(pendingVideoId);
+
+                    pendingVideoId = null;
+                }
+            },
+
+            onError: function(event) {
+
+                document.getElementById("status").textContent =
+                    "YouTube error: " + event.data;
+            }
+        }
+    });
+}
+
+
+/*
+ * Extract YouTube video ID
+ */
+
+function getVideoId(input) {
+
+    input = input.trim();
+
+    // Direct 11-character YouTube ID
+    if (/^[A-Za-z0-9_-]{11}$/.test(input)) {
+        return input;
+    }
+
+    let url;
+
+    try {
+        url = new URL(input);
+    }
+    catch (error) {
+        return null;
+    }
+
+
+    /*
+     * youtu.be/VIDEO_ID
+     */
+
+    if (
+        url.hostname === "youtu.be" ||
+        url.hostname === "www.youtu.be"
+    ) {
+
+        return url.pathname
+            .split("/")
+            .filter(Boolean)[0] || null;
+    }
+
+
+    /*
+     * youtube.com/watch?v=VIDEO_ID
+     */
+
+    if (
+        url.hostname === "youtube.com" ||
+        url.hostname === "www.youtube.com" ||
+        url.hostname === "m.youtube.com"
+    ) {
+
+        // /watch?v=...
+        if (url.pathname === "/watch") {
+
+            return url.searchParams.get("v");
+        }
+
+
+        // /shorts/VIDEO_ID
+        if (url.pathname.startsWith("/shorts/")) {
+
+            return url.pathname
+                .split("/")[2];
+        }
+
+
+        // /embed/VIDEO_ID
+        if (url.pathname.startsWith("/embed/")) {
+
+            return url.pathname
+                .split("/")[2];
+        }
+    }
+
+    return null;
+}
+
+
+/*
+ * Load video
+ */
+
+function loadVideo() {
+
+    const input =
+        document.getElementById("url").value;
+
+    const videoId =
+        getVideoId(input);
+
+
+    if (!videoId) {
+
+        document.getElementById("status").textContent =
+            "Could not find a YouTube video ID.";
+
+        return;
+    }
+
+
+    document.getElementById("status").textContent =
+        "Loading video: " + videoId;
+
+
+    /*
+     * Player isn't ready yet.
+     * Remember the requested video.
+     */
+
+    if (!playerReady) {
+
+        pendingVideoId = videoId;
+
+        return;
+    }
+
+
+    player.loadVideoById(videoId);
+}
+
+
+/*
+ * Change 360° camera
+ */
+
+function updateView() {
+
+    const yaw =
+        Number(document.getElementById("yaw").value);
+
+    const pitch =
+        Number(document.getElementById("pitch").value);
+
+    const fov =
+        Number(document.getElementById("fov").value);
+
+
+    // Update labels
+
+    document.getElementById("yawValue").textContent =
+        yaw + "°";
+
+    document.getElementById("pitchValue").textContent =
+        pitch + "°";
+
+    document.getElementById("fovValue").textContent =
+        fov + "°";
+
+
+    /*
+     * Don't call API until player exists
+     */
+
+    if (!playerReady) {
+        return;
+    }
+
+
+    /*
+     * Tell YouTube to change the
+     * 360° viewing perspective.
+     */
+
+    player.setSphericalProperties({
+
+        yaw: yaw,
+
+        pitch: pitch,
+
+        fov: fov
+
+    });
+}
+
+
+/*
+ * Reset
+ */
+
+function resetView() {
+
+    document.getElementById("yaw").value = 0;
+
+    document.getElementById("pitch").value = 0;
+
+    document.getElementById("fov").value = 100;
+
+    updateView();
+}
+
+</script>
+
+</body>
+</html>
